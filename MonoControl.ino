@@ -9,31 +9,30 @@
 #define STOP1PIN 10
 #define STOP2PIN 11
 
-#define DIR_UP HIGH
-#define DIR_DOWN LOW
-#define ENA LOW
-#define DIS HIGH
+#define DIR_UP LOW
+#define DIR_DOWN HIGH
+#define ENA HIGH
+#define DIS LOW
 
 #define DEV_NAME "Monochromator controller (v0.1, ID0855)"
 
 int i, stepInc;
 String inmsg;
 long dst, tPos;
+volatile byte mstep = 0;
 volatile int state, stop1, stop2;
 volatile long k, acp;
 
-// minTI = 1500 -> max speed = 200 RPM
-//unsigned int minTI = 1500;
-//unsigned int maxTI = 15000;
-unsigned int minTI = 150;
-unsigned int maxTI = 1500;
-unsigned int maxASt = 1000;
-float lt;
+// minTI = 750 -> max speed = 100 RPM (1/4 substep)
+unsigned int minTI = 340;
+unsigned int maxTI = 4000;
+unsigned int maxASt = 1200;
+float sigma, lt;
 unsigned int aSteps; 
-unsigned int accelTMap[500];
+unsigned int accelTMap[600];
 
 int eeAddress = 0;
-volatile long stepperPos = 0;
+unsigned long stepperPos = 0;
 unsigned long minPos = 0;
 unsigned long maxPos = 1000000;
 
@@ -53,7 +52,7 @@ void setup() {
   digitalWrite(ENApin, DIS);
 
   // PUL default
-  digitalWrite(PULpin, HIGH);
+  digitalWrite(PULpin, LOW);
 
   // read stepper position
   EEPROM.get(eeAddress, stepperPos);
@@ -77,11 +76,12 @@ void setup() {
 }
 
 void accelMap(int aPts) {
-  lt = 2 * 0.99 * (maxTI - minTI) / aPts;
+  sigma = aPts / 3.5;
+  lt = 2.535 * (maxTI - minTI) / aPts;
   
   accelTMap[0] = maxTI;
   for (i = 1; i < aPts; i++) {
-    accelTMap[i] = floor(accelTMap[i-1] - lt * exp(-pow((i - aPts / 2.0) / (aPts / 5.0), 2) / 2));
+    accelTMap[i] = floor(accelTMap[i-1] - lt * exp(-pow(i / sigma, 2) / 2));
   }
 }
 
@@ -100,6 +100,7 @@ void setMovingParams(long dst) {
     accelMap(maxASt/4);
   }
   
+  mstep = 0;
   acp = 0;
   OCR1A = accelTMap[0]; 
   
@@ -201,7 +202,7 @@ void loop() {
       digitalWrite(ENApin, ENA);
       
       aSteps = 0;
-      OCR1A = maxTI;
+      OCR1A = minTI * 3;
       k = maxPos;
       
       Serial.println("OK");
@@ -223,20 +224,29 @@ ISR(TIMER1_COMPA_vect)
 {
   if (k > 0) {
     // motor step
-    state = digitalRead(LEDPIN);
-    digitalWrite(LEDPIN, !state);
-//    state = digitalRead(PULpin);
-//    digitalWrite(PULpin, !state);
+    state = digitalRead(PULpin);
+    digitalWrite(PULpin, !state);
+    mstep += 1;
     
-    if (state == HIGH) {
+    // 1/4 substep, 2 states. 1 step = 8 microsteps 
+    if (mstep > 7) {
+      mstep = 0;
       k--;
-      stepperPos += stepInc;
+      stepperPos = stepperPos + stepInc;
 
-      stop1 = digitalRead(STOP1PIN);
-      stop2 = digitalRead(STOP2PIN);
-      if((stop1 == LOW) or (stop2 == LOW)) {
-        k = 0;
-        stepperPos = 0;
+      if(stepInc < 0) {
+        stop1 = digitalRead(STOP1PIN);
+        if (stop1 == LOW) {
+          k = 0;
+          stepperPos = 0;
+        }
+      } 
+      else {
+        stop2 = digitalRead(STOP2PIN);
+        if (stop2 == LOW) {
+          k = 0;
+          maxPos = stepperPos;
+        }
       }
       
       if(k == 0) {
@@ -244,9 +254,12 @@ ISR(TIMER1_COMPA_vect)
         EEPROM.put(eeAddress, stepperPos);
         // disable
         digitalWrite(ENApin, DIS);
+        // set dafault direction
+        digitalWrite(DIRpin, DIR_UP);
       } else {
         // acceleration map index
-        if(((dst - k) < aSteps) and (k % 2 == 0)) {
+        // Serial.println(accelTMap[acp]);
+        if((abs(dst - k) < aSteps) and (k % 2 == 0)) {
           acp += 1;
           // set timer value from acceleration map
           OCR1A = accelTMap[acp];

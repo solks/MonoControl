@@ -9,12 +9,12 @@
 #define STOP1PIN 10
 #define STOP2PIN 11
 
-#define DIR_UP LOW
-#define DIR_DOWN HIGH
+#define DIR_UP HIGH
+#define DIR_DOWN LOW
 #define ENA HIGH
 #define DIS LOW
 
-#define DEV_NAME "Monochromator controller (v0.1, ID0855)"
+#define DEV_NAME "Monochromator controller (v1.0, ID0855)"
 
 int i, stepInc;
 String inmsg;
@@ -24,12 +24,12 @@ volatile int state, stop1, stop2;
 volatile long k, acp;
 
 // minTI = 750 -> max speed = 100 RPM (1/4 substep)
-unsigned int minTI = 340;
+unsigned int minTI = 340; // minTI = 160;
 unsigned int maxTI = 4000;
 unsigned int maxASt = 1200;
 float sigma, lt;
 unsigned int aSteps; 
-unsigned int accelTMap[600];
+unsigned int accelTMap[601];
 
 int eeAddress = 0;
 unsigned long stepperPos = 0;
@@ -82,6 +82,8 @@ void accelMap(int aPts) {
   accelTMap[0] = maxTI;
   for (i = 1; i < aPts; i++) {
     accelTMap[i] = floor(accelTMap[i-1] - lt * exp(-pow(i / sigma, 2) / 2));
+    // Serial.print(String(i)+" -> ");
+    // Serial.println(accelTMap[i]);
   }
 }
 
@@ -89,15 +91,15 @@ void setMovingParams(long dst) {
   // calculation of the acceleration map
   if(dst > 2*maxASt) {
     aSteps = maxASt;
-    accelMap(aSteps/2); // acceleration map contains the time value for every second step
+    accelMap(aSteps/2 + 1); // acceleration map contains the time value for every second step
     
   } else if(dst > maxASt) {
     aSteps = dst / 2;
-    accelMap(aSteps/2);
+    accelMap(aSteps/2 + 1);
     
   } else {
     aSteps = dst / 2;
-    accelMap(maxASt/4);
+    accelMap(maxASt/4 + 1);
   }
   
   mstep = 0;
@@ -128,6 +130,7 @@ void loop() {
           digitalWrite(DIRpin, DIR_UP);
           stepInc = 1;
         } else {
+          dst = abs(dst);
           digitalWrite(DIRpin, DIR_DOWN);
           stepInc = -1;
         }
@@ -202,7 +205,7 @@ void loop() {
       digitalWrite(ENApin, ENA);
       
       aSteps = 0;
-      OCR1A = minTI * 3;
+      OCR1A = minTI * 2;
       k = maxPos;
       
       Serial.println("OK");
@@ -257,13 +260,12 @@ ISR(TIMER1_COMPA_vect)
         // set dafault direction
         digitalWrite(DIRpin, DIR_UP);
       } else {
-        // acceleration map index
-        // Serial.println(accelTMap[acp]);
-        if((abs(dst - k) < aSteps) and (k % 2 == 0)) {
-          acp += 1;
+        // acceleration map
+        if(((dst - k) <= aSteps) and ((dst - k) % 2 == 0)) {
           // set timer value from acceleration map
+          acp += 1;
           OCR1A = accelTMap[acp];
-        } else if((k < aSteps) and (k % 2 == 0)) {
+        } else if((k <= aSteps) and (k % 2 == 0)) {
           acp -= 1;
           OCR1A = accelTMap[acp];
         }   

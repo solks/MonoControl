@@ -14,7 +14,7 @@
 #define ENA HIGH
 #define DIS LOW
 
-#define DEV_NAME "Monochromator controller (v1.0, ID0855)"
+#define DEV_NAME "Monochromator controller (v1.1, ID0855)"
 
 int i, stepInc;
 String inmsg;
@@ -205,7 +205,8 @@ void loop() {
       digitalWrite(ENApin, ENA);
       
       aSteps = 0;
-      OCR1A = minTI * 2;
+      OCR1A = minTI * 5;
+      dst = maxPos;
       k = maxPos;
       
       Serial.println("OK");
